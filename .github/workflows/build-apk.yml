@@ -37,7 +37,6 @@ jobs:
             exit 1
           fi
 
-          chmod +x "$MANAGER"
           yes | "$MANAGER" --licenses || true
 
           "$MANAGER" "platforms;android-35" "build-tools;35.0.0" "platform-tools"
