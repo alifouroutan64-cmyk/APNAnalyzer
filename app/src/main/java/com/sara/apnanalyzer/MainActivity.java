@@ -185,12 +185,130 @@ public class MainActivity extends Activity {
         Object item=spinner.getSelectedItem();
         return item==null?"":item.toString();
     }
+    private class MultiSelectField {
+        final String[] options;
+        final boolean[] checked;
+        final TextView summary;
+
+        MultiSelectField(String[] options, boolean[] checked, TextView summary) {
+            this.options = options;
+            this.checked = checked;
+            this.summary = summary;
+        }
+
+        String getValue() {
+            ArrayList<String> values = new ArrayList<>();
+            for (int i = 0; i < options.length; i++) {
+                if (checked[i]) values.add(options[i]);
+            }
+            return android.text.TextUtils.join(",", values);
+        }
+    }
+
+    private boolean hasChecked(boolean[] values) {
+        for (boolean value : values) {
+            if (value) return true;
+        }
+        return false;
+    }
+
+    private MultiSelectField addMultiSelect(
+            LinearLayout form, String label, String current, String[] options) {
+
+        TextView title = text(label, 13, 0xff334155, true);
+        title.setPadding(dp(2), dp(8), dp(2), dp(2));
+        form.addView(title);
+
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), dp(12), dp(12), dp(12));
+        row.setBackground(shape(0xffF4F7FB, 0xffCBD5E1, 10));
+
+        TextView summary = new TextView(this);
+        summary.setTextColor(0xff172033);
+        summary.setTextSize(14);
+        summary.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        summary.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+
+        row.addView(summary, new LinearLayout.LayoutParams(0, -2, 1));
+
+        TextView arrow = new TextView(this);
+        arrow.setText("⌄");
+        arrow.setTextSize(20);
+        arrow.setTextColor(0xff334155);
+        row.addView(arrow);
+
+        boolean[] checked = new boolean[options.length];
+        Set<String> initial = new HashSet<>();
+
+        if (current != null) {
+            for (String item : current.split(",")) {
+                initial.add(item.trim().toLowerCase(Locale.ROOT));
+            }
+        }
+
+        for (int i = 0; i < options.length; i++) {
+            checked[i] = initial.contains(
+                options[i].toLowerCase(Locale.ROOT));
+        }
+
+        if (!hasChecked(checked)) checked[0] = true;
+
+        Runnable refresh = () -> {
+            ArrayList<String> selected = new ArrayList<>();
+            for (int i = 0; i < options.length; i++) {
+                if (checked[i]) selected.add(options[i]);
+            }
+            summary.setText(android.text.TextUtils.join("، ", selected));
+        };
+
+        refresh.run();
+
+        row.setOnClickListener(v -> {
+            boolean[] draft = checked.clone();
+
+            AlertDialog picker = new AlertDialog.Builder(this)
+                .setTitle(label)
+                .setMultiChoiceItems(options, draft,
+                    (dialog, which, isChecked) -> {
+
+                        if (which == 0 && isChecked) {
+                            for (int i = 1; i < draft.length; i++) {
+                                draft[i] = false;
+                            }
+                        } else if (which > 0 && isChecked) {
+                            draft[0] = false;
+                        }
+
+                        ListView list = ((AlertDialog) dialog).getListView();
+                        for (int i = 0; i < draft.length; i++) {
+                            list.setItemChecked(i, draft[i]);
+                        }
+                    })
+                .setNegativeButton("انصراف", null)
+                .setPositiveButton("تأیید", (dialog, which) -> {
+                    System.arraycopy(draft, 0, checked, 0, checked.length);
+                    if (!hasChecked(checked)) checked[0] = true;
+                    refresh.run();
+                })
+                .create();
+
+            picker.show();
+        });
+
+        LinearLayout.LayoutParams lp =
+            new LinearLayout.LayoutParams(-1, -2);
+        lp.setMargins(0, dp(4), 0, dp(4));
+        form.addView(row, lp);
+
+        return new MultiSelectField(options, checked, summary);
+    }
     private void profileDialog(Profile old,int index) {
         LinearLayout form=vertical(); form.setPadding(dp(12),dp(8),dp(12),dp(8));
         EditText name=field("نام پروفایل",old==null?"MCI-GPRS":old.name,false);
         EditText apn=field("APN",old==null?"mcinet":old.apn,false);
         EditText mcc=field("MCC",old==null?"432":old.mcc,true),mnc=field("MNC",old==null?"11":old.mnc,true);
-        EditText type=field("APN Type",old==null?"default,supl":old.type,false);
+        MultiSelectField type=addMultiSelect(form,"APN Type",old==null?"default,supl":old.type,new String[]{"default","mms","supl","dun","hipri","fota","ims","cbs","xcap","emergency"});
         Spinner auth=addDropdown(form,"Authentication type",old==null?"None":old.auth,new String[]{"None","PAP","CHAP","PAP or CHAP"});
         Spinner proto=addDropdown(form,"APN protocol",old==null?"IPv4/IPv6":old.protocol,new String[]{"IPv4","IPv6","IPv4/IPv6"});
         Spinner roam=addDropdown(form,"APN roaming protocol",old==null?"IPv4/IPv6":old.roamingProtocol,new String[]{"IPv4","IPv6","IPv4/IPv6"});
@@ -198,7 +316,7 @@ public class MainActivity extends Activity {
         EditText proxy=field("Proxy",old==null?"":old.proxy,false),port=field("Port",old==null?"":old.port,true);
         EditText server=field("Server",old==null?"":old.server,false),mmsc=field("MMSC",old==null?"":old.mmsc,false);
         EditText mmsProxy=field("MMS Proxy",old==null?"":old.mmsProxy,false),mmsPort=field("MMS Port",old==null?"":old.mmsPort,true);
-        Spinner bearer=addDropdown(form,"Bearer",old==null?"Unspecified":old.bearer,new String[]{"Unspecified","LTE","HSPAP","HSPA","HSUPA","HSDPA","UMTS","EDGE","GPRS","eHRPD","EVDO_B","EVDO_A","EVDO_0","1xRTT","IS95B","IS95A","NR"});
+        MultiSelectField bearer=addMultiSelect(form,"Bearer",old==null?"Unspecified":old.bearer,new String[]{"Unspecified","LTE","HSPAP","HSPA","HSUPA","HSDPA","UMTS","EDGE","GPRS","eHRPD","EVDO_B","EVDO_A","EVDO_0","1xRTT","IS95B","IS95A","NR"});
         EditText mtu=field("MTU (خالی یا صفر = خودکار)",old==null?"0":String.valueOf(old.mtu),true);
         Spinner mvnoType=addDropdown(form,"MVNO type",old==null?"None":old.mvnoType,new String[]{"None","SPN","IMSI","GID","ICCID"});
         EditText mvnoValue=field("MVNO value",old==null?"":old.mvnoValue,false);
@@ -212,9 +330,9 @@ public class MainActivity extends Activity {
         dialog.setOnShowListener(x->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             try {
                 int mtuVal=mtu.getText().toString().trim().isEmpty()?0:Integer.parseInt(mtu.getText().toString().trim());
-                Profile p=new Profile(val(name),val(apn),val(mcc),val(mnc),val(type),selected(proto),selected(auth),val(user),val(pass),mtuVal);
+                Profile p=new Profile(val(name),val(apn),val(mcc),val(mnc),type.getValue(),selected(proto),selected(auth),val(user),val(pass),mtuVal);
                 p.roamingProtocol=selected(roam); p.proxy=val(proxy); p.port=val(port); p.server=val(server); p.mmsc=val(mmsc);
-                p.mmsProxy=val(mmsProxy); p.mmsPort=val(mmsPort); p.bearer=selected(bearer); p.mvnoType=selected(mvnoType); p.mvnoValue=val(mvnoValue);
+                p.mmsProxy=val(mmsProxy); p.mmsPort=val(mmsPort); p.bearer=bearer.getValue(); p.mvnoType=selected(mvnoType); p.mvnoValue=val(mvnoValue);
                 if(p.name.isEmpty()||p.apn.isEmpty())throw new IllegalArgumentException("نام و APN الزامی است");
                 if(!p.mcc.matches("\\d{3}")||!p.mnc.matches("\\d{2,3}"))throw new IllegalArgumentException("MCC باید ۳ رقم و MNC باید ۲ یا ۳ رقم باشد.");
                 if(index>=0)profiles.set(index,p);else profiles.add(p); save(); renderProfiles(); dialog.dismiss();
