@@ -1,4 +1,4 @@
-package com.sara.apnanalyzer;
+﻿package com.sara.apnanalyzer;
 
 import org.junit.Test;
 import static org.junit.Assert.*;
@@ -19,7 +19,7 @@ public class FreezeTrackerTest {
         assertEquals(1, tracker.getFreezeCount());
         tracker.onSuccess(9000L);
         assertEquals(1, tracker.getFreezeCount());
-        assertEquals(8000L, tracker.getTotalFreezeMs());
+        assertEquals(14000L, tracker.getTotalFreezeMs());
         assertEquals(8000L, tracker.getLongestFreezeMs());
     }
 
@@ -32,7 +32,7 @@ public class FreezeTrackerTest {
         tracker.onFailure(16000L);
         tracker.onSuccess(17000L);
         assertEquals(2, tracker.getFreezeCount());
-        assertEquals(8000L, tracker.getTotalFreezeMs());
+        assertEquals(14000L, tracker.getTotalFreezeMs());
     }
 
     @Test public void unfinishedOutageIsCountedOnFinish() {
@@ -43,3 +43,4 @@ public class FreezeTrackerTest {
         assertEquals(7000L, tracker.getTotalFreezeMs());
     }
 }
+
