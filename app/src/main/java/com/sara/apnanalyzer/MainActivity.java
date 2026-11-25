@@ -198,7 +198,7 @@ public class MainActivity extends Activity {
         EditText proxy=field("Proxy",old==null?"":old.proxy,false),port=field("Port",old==null?"":old.port,true);
         EditText server=field("Server",old==null?"":old.server,false),mmsc=field("MMSC",old==null?"":old.mmsc,false);
         EditText mmsProxy=field("MMS Proxy",old==null?"":old.mmsProxy,false),mmsPort=field("MMS Port",old==null?"":old.mmsPort,true);
-        Spinner bearer=addDropdown(form,"Bearer",old==null?"Unspecified":old.bearer,new String[]{"Unspecified","LTE","HSPAP","HSPA","HSUPA","HSDPA","UMTS","EDGE"});
+        Spinner bearer=addDropdown(form,"Bearer",old==null?"Unspecified":old.bearer,new String[]{"Unspecified","LTE","HSPAP","HSPA","HSUPA","HSDPA","UMTS","EDGE","GPRS","eHRPD","EVDO_B","EVDO_A","EVDO_0","1xRTT","IS95B","IS95A","NR"});
         EditText mtu=field("MTU (خالی یا صفر = خودکار)",old==null?"0":String.valueOf(old.mtu),true);
         Spinner mvnoType=addDropdown(form,"MVNO type",old==null?"None":old.mvnoType,new String[]{"None","SPN","IMSI","GID","ICCID"});
         EditText mvnoValue=field("MVNO value",old==null?"":old.mvnoValue,false);
