@@ -27,6 +27,10 @@ public class MainActivity extends Activity {
     private ExecutorService worker=Executors.newSingleThreadExecutor();
     private volatile boolean testing=false;
     private static final String HISTORY_KEY="test_history_v1";
+    private static final long MONITOR_DURATION_MS=1800000L, MONITOR_INTERVAL_MS=2000L, FREEZE_THRESHOLD_MS=6000L;
+    private volatile boolean monitoring=false,monitorStop=false;
+    private Button monitorButton,exportButton;
+    private TextView monitorStatus;
 
     static class Profile {
         String name, apn, mcc, mnc, type, protocol, roamingProtocol, auth, username, password;
@@ -53,6 +57,13 @@ public class MainActivity extends Activity {
         LinearLayout test=card();activeLabel=text("قبل از تست: وای‌فای را خاموش کن، دیتای سیم‌کارت انتخاب‌شده را روشن کن و APN موردنظر را در تنظیمات گوشی اعمال کن.",13,0xffFBBF24,false);test.addView(activeLabel);
         profileSpinner=new Spinner(this);test.addView(text("پروفایل اعمال‌شده فعلی را انتخاب کن",13,0xffDCE8F5,false));test.addView(profileSpinner);
         testButton=button("▶ شروع آزمایش شبکه");testButton.setOnClickListener(v->runTest());test.addView(testButton);status=text("آماده آزمایش",14,0xffA7F3D0,true);test.addView(status);results=text("نتایج آزمایش اینجا نمایش داده می‌شود.",14,Color.WHITE,false);test.addView(results);root.addView(test);
+        LinearLayout monitor=card();
+        monitor.addView(text("پایش فریز 5G — نسخه 2.0",18,Color.WHITE,true));
+        monitor.addView(text("۳۰ دقیقه | هر ۲ ثانیه | آستانه ۶ ثانیه. آزمایش اتصال TCP به چند مقصد IPv4 و IPv6. برنامه باید در پیش‌زمینه بماند.",13,0xffA9BDD2,false));
+        monitorButton=button("شروع پایش ۳۰ دقیقه‌ای");
+        monitorButton.setOnClickListener(v->{if(monitoring){monitorStop=true;monitorButton.setEnabled(false);}else startMonitor();});monitor.addView(monitorButton);
+        monitorStatus=text("آماده پایش",14,Color.WHITE,false);monitor.addView(monitorStatus);
+        exportButton=button("ذخیره گزارش آخر CSV");exportButton.setEnabled(!getSharedPreferences("apn",0).getString("monitor_csv","").isEmpty());exportButton.setOnClickListener(v->exportMonitor());monitor.addView(exportButton);root.addView(monitor);
         LinearLayout hist=card();hist.addView(text("تاریخچه مقایسه APNها",16,Color.WHITE,true));historyView=text("هنوز آزمایشی ثبت نشده است.",12,Color.WHITE,false);hist.addView(historyView);Button clearHistory=button("پاک کردن تاریخچه");clearHistory.setOnClickListener(v->{history.clear();saveHistory();renderHistory();});hist.addView(clearHistory);root.addView(hist);
         root.addView(text("روش امتیازدهی",16,Color.WHITE,true));root.addView(text("پایداری اتصال، میانگین زمان پاسخ HTTPS، نوسان زمان پاسخ، درصد درخواست‌های ناموفق و زمان DNS بررسی می‌شوند. این تست سرعت دانلود نیست و حجم مصرفی آن کم است، اما صفر نیست.",13,0xff9CAFC5,false));
         root.addView(text("نکته فنی: برنامه APN را مستقیماً تغییر نمی‌دهد و MTU را هم در سطح مودم اعمال نمی‌کند؛ مقادیر در پروفایل ذخیره می‌شوند تا بتوانی آن‌ها را دستی وارد کنی. نتیجه تست مربوط به اتصال فعال گوشی است، نه تضمین کیفیت ذاتی APN.",12,0xffFCA5A5,false));
@@ -66,15 +77,103 @@ public class MainActivity extends Activity {
         for(EditText e:new EditText[]{name,apn,mcc,mnc,type,proto,roam,auth,user,pass,proxy,port,server,mmsc,mmsProxy,mmsPort,bearer,mtu})form.addView(e);
         ScrollView sv=new ScrollView(this);sv.addView(form);new AlertDialog.Builder(this).setTitle(old==null?"پروفایل جدید":"ویرایش پروفایل").setView(sv).setNegativeButton("انصراف",null).setPositiveButton("ذخیره",(d,w)->{try{Profile p=new Profile(name.getText().toString().trim(),apn.getText().toString().trim(),mcc.getText().toString().trim(),mnc.getText().toString().trim(),type.getText().toString().trim(),proto.getText().toString().trim(),auth.getText().toString().trim(),user.getText().toString(),pass.getText().toString(),Integer.parseInt(mtu.getText().toString().trim()));p.roamingProtocol=roam.getText().toString().trim();p.proxy=proxy.getText().toString().trim();p.port=port.getText().toString().trim();p.server=server.getText().toString().trim();p.mmsc=mmsc.getText().toString().trim();p.mmsProxy=mmsProxy.getText().toString().trim();p.mmsPort=mmsPort.getText().toString().trim();p.bearer=bearer.getText().toString().trim();if(p.name.isEmpty()||p.apn.isEmpty())throw new Exception("نام و APN الزامی است");if(index>=0)profiles.set(index,p);else profiles.add(p);save();renderProfiles();}catch(Exception ex){new AlertDialog.Builder(this).setMessage("اطلاعات معتبر نیست؛ مقدار MTU باید عدد باشد.").setPositiveButton("باشه",null).show();}}).show();
     }
-    private void runTest(){if(testing)return;ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);Network n=cm.getActiveNetwork();NetworkCapabilities caps=n==null?null:cm.getNetworkCapabilities(n);if(caps==null||!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)){status.setText("اتصال اینترنت فعال پیدا نشد.");return;}if(caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)){new AlertDialog.Builder(this).setMessage("وای‌فای هنوز روشن/متصل است. برای تست دیتای سیم‌کارت، وای‌فای را خاموش کن.").setPositiveButton("متوجه شدم",null).show();return;}if(!caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)){status.setText("اتصال فعال، شبکه موبایل تشخیص داده نشد. VPN یا اتصال‌های دیگر را موقتاً غیرفعال کن.");return;}
+    private void runTest(){if(testing||monitoring)return;ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);Network n=cm.getActiveNetwork();NetworkCapabilities caps=n==null?null:cm.getNetworkCapabilities(n);if(caps==null||!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)){status.setText("اتصال اینترنت فعال پیدا نشد.");return;}if(caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)){new AlertDialog.Builder(this).setMessage("وای‌فای هنوز روشن/متصل است. برای تست دیتای سیم‌کارت، وای‌فای را خاموش کن.").setPositiveButton("متوجه شدم",null).show();return;}if(!caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)){status.setText("اتصال فعال، شبکه موبایل تشخیص داده نشد. VPN یا اتصال‌های دیگر را موقتاً غیرفعال کن.");return;}
         testing=true;testButton.setEnabled(false);status.setText("در حال آزمایش… لطفاً تا پایان تست از برنامه خارج نشو.");results.setText("");final String sim=simSpinner.getSelectedItem().toString();final String profile=(profileSpinner!=null&&profileSpinner.getSelectedItem()!=null)?profileSpinner.getSelectedItem().toString():"پروفایل نامشخص";worker.execute(()->{ArrayList<Long> times=new ArrayList<>();int ok=0;StringBuilder log=new StringBuilder();long dns=-1;try{long ds=System.nanoTime();InetAddress.getAllByName("one.one.one.one");dns=(System.nanoTime()-ds)/1_000_000; }catch(Exception e){}for(int i=0;i<8;i++){long t=System.nanoTime();boolean good=false;try{HttpURLConnection c=(HttpURLConnection)new URL("https://www.google.com/generate_204").openConnection();c.setConnectTimeout(5000);c.setReadTimeout(5000);c.setRequestMethod("GET");c.setUseCaches(false);int code=c.getResponseCode();good=(code>=200&&code<400);c.disconnect();}catch(Exception e){}long ms=(System.nanoTime()-t)/1_000_000;if(good){ok++;times.add(ms);log.append("آزمون ").append(i+1).append(": ").append(ms).append(" ms\n");}else log.append("آزمون ").append(i+1).append(": ناموفق\n");try{Thread.sleep(350);}catch(Exception ignored){}}
             double avg=0,jitter=0;for(long x:times)avg+=x;if(!times.isEmpty())avg/=times.size();if(times.size()>1){for(int i=1;i<times.size();i++)jitter+=Math.abs(times.get(i)-times.get(i-1));jitter/=(times.size()-1);}final double a=avg,j=jitter;final int success=ok;final long d=dns;final String detail=log.toString();final int score=score(ok,avg,jitter,dns);final String record=java.text.DateFormat.getDateTimeInstance().format(new Date())+" | "+sim+" | "+profile+" | امتیاز "+score+" | موفق "+ok+"/8 | میانگین "+(ok==0?"—":String.format(Locale.US,"%.0fms",avg))+" | نوسان "+String.format(Locale.US,"%.0fms",jitter)+" | DNS "+(dns<0?"—":dns+"ms");runOnUiThread(()->{history.add(0,record);while(history.size()>30)history.remove(history.size()-1);saveHistory();renderHistory();testing=false;testButton.setEnabled(true);status.setText("آزمایش تمام شد — امتیاز تقریبی: "+score+" از 100");results.setText("سیم‌کارت انتخابی: "+sim+"\nموفقیت اتصال: "+success+" از 8\nنرخ ناموفق بودن درخواست‌ها: "+(100-success*100/8)+"٪\nمیانگین زمان پاسخ HTTPS: "+(success==0?"—":String.format(Locale.US,"%.0f ms",a))+"\nنوسان زمان پاسخ (تقریبی): "+String.format(Locale.US,"%.0f ms",j)+"\nزمان DNS: "+(d<0?"ناموفق":d+" ms")+"\n\n"+detail+"\nاین امتیاز فقط برای اتصال فعلی و در همین لحظه معتبر است. برای مقایسه APNها، هر بار یک پروفایل را اعمال و همین تست را در شرایط مشابه تکرار کن.");});});
     }
+    private Network cellular(ConnectivityManager cm){
+        Network n=cm.getActiveNetwork(); NetworkCapabilities c=n==null?null:cm.getNetworkCapabilities(n);
+        return c!=null && c.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) && !c.hasTransport(NetworkCapabilities.TRANSPORT_VPN) && c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)?n:null;
+    }
+    private static long tcp(Network n,String ip){
+        if(n==null)return -1;
+        long start=SystemClock.elapsedRealtime();
+        try(java.net.Socket s=n.getSocketFactory().createSocket()){
+            s.connect(new InetSocketAddress(InetAddress.getByName(ip),443),1300);
+            return SystemClock.elapsedRealtime()-start;
+        }catch(Exception e){return -1;}
+    }
+    private static String csvCell(String s){
+        if(!s.isEmpty()&&"=+-@\t\r".indexOf(s.charAt(0))>=0)s="'"+s;
+        return "\""+s.replace("\"","\"\"")+"\"";
+    }
+    private void startMonitor(){
+        if(testing||monitoring)return;
+        if(profiles.isEmpty()){monitorStatus.setText("ابتدا یک پروفایل APN را ذخیره و در تنظیمات گوشی اعمال کن.");return;}
+        final ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);
+        if(cellular(cm)==null){monitorStatus.setText("دیتای موبایل را فعال و Wi-Fi و VPN را خاموش کن.");return;}
+        final String sim=simSpinner.getSelectedItem().toString(), profile=profileSpinner.getSelectedItem().toString();
+        monitoring=true;monitorStop=false;testButton.setEnabled(false);exportButton.setEnabled(false);
+        monitorButton.setText("توقف پایش");getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        worker.execute(()->{
+            ExecutorService probes=Executors.newFixedThreadPool(4);
+            FreezeTracker freeze=new FreezeTracker(FREEZE_THRESHOLD_MS);
+            StringBuilder csv=new StringBuilder("elapsed_ms,sim_label,profile_label,network_handle,link_mtu,ipv4_cloudflare_ms,ipv4_google_ms,ipv6_cloudflare_ms,ipv6_google_ms,round_success,freeze_events\n");
+            long start=SystemClock.elapsedRealtime(),lastHandle=-2,latency=0;
+            int rounds=0,ok=0,ipv4=0,ipv6=0,changes=0;
+            String failure="";
+            try{
+                for(long offset=0;offset<MONITOR_DURATION_MS&&!monitorStop;offset+=MONITOR_INTERVAL_MS){
+                    long wait=start+offset-SystemClock.elapsedRealtime();if(wait>0)Thread.sleep(wait);
+                    if(monitorStop||SystemClock.elapsedRealtime()-start>=MONITOR_DURATION_MS)break;
+                    long tick=SystemClock.elapsedRealtime()-start;
+                    final Network net=cellular(cm);long handle=net==null?-1:net.getNetworkHandle();
+                    if(lastHandle!=-2&&lastHandle!=handle)changes++;lastHandle=handle;
+                    int mtu=0;
+                    if(net!=null&&Build.VERSION.SDK_INT>=29){LinkProperties lp=cm.getLinkProperties(net);if(lp!=null)mtu=lp.getMtu();}
+                    List<Callable<Long>> tasks=Arrays.asList(()->tcp(net,"1.1.1.1"),()->tcp(net,"8.8.8.8"),()->tcp(net,"2606:4700:4700::1111"),()->tcp(net,"2001:4860:4860::8888"));
+                    List<Future<Long>> futures=probes.invokeAll(tasks,1700,TimeUnit.MILLISECONDS);
+                    long[] v={-1,-1,-1,-1};
+                    for(int i=0;i<4;i++)try{if(!futures.get(i).isCancelled())v[i]=futures.get(i).get();}catch(ExecutionException ignored){}
+                    boolean a=v[0]>=0||v[1]>=0,b=v[2]>=0||v[3]>=0,good=a||b;
+                    rounds++;if(a)ipv4++;if(b)ipv6++;if(good){ok++;long best=Long.MAX_VALUE;for(long x:v)if(x>=0)best=Math.min(best,x);latency+=best;}
+                    freeze.observe(tick,good);
+                    csv.append(tick).append(',').append(csvCell(sim)).append(',').append(csvCell(profile)).append(',').append(handle).append(',').append(mtu);
+                    for(long x:v)csv.append(',').append(x);
+                    csv.append(',').append(good?1:0).append(',').append(freeze.events).append('\n');
+                    final String progress="زمان: "+Math.min(1800,(SystemClock.elapsedRealtime()-start)/1000)+" / 1800 ثانیه\nموفق: "+ok+" / "+rounds+" | IPv4: "+ipv4+" | IPv6: "+ipv6+"\nقطعی احتمالی: "+freeze.events+" | طولانی‌ترین بازه مشاهده‌شده: "+freeze.longest/1000+" ثانیه\nتغییر شبکه: "+changes+" | MTU لینک: "+(mtu>0?String.valueOf(mtu):"نامشخص")+"\n"+(good?"حداقل یک مقصد پاسخ داد":"هیچ مقصدی پاسخ نداد");
+                    runOnUiThread(()->{if(!isDestroyed())monitorStatus.setText(progress);});
+                    long elapsed=SystemClock.elapsedRealtime()-start;
+                    if(elapsed>offset+MONITOR_INTERVAL_MS)offset=(elapsed/MONITOR_INTERVAL_MS)*MONITOR_INTERVAL_MS;
+                }
+            }catch(InterruptedException e){Thread.currentThread().interrupt();monitorStop=true;}
+             catch(Exception e){failure="\nخطا: "+e.getClass().getSimpleName();}
+            finally{
+                probes.shutdownNow();
+                final int completed=rounds;
+                final String summary=(failure.isEmpty()?(monitorStop?"پایش متوقف شد":"پایش پایان یافت"):"پایش ناقص ماند")+" | "+sim+" | "+profile+"\nدور موفق: "+ok+" / "+rounds+" | IPv4: "+ipv4+" | IPv6: "+ipv6+"\nدرصد موفقیت: "+(rounds==0?"نامشخص":String.format(Locale.US,"%.1f%%",100.0*ok/rounds))+"\nقطعی احتمالی: "+freeze.events+" | طولانی‌ترین بازه: "+freeze.longest/1000+" ثانیه | تغییر شبکه: "+changes+"\nمیانگین سریع‌ترین اتصال TCP: "+(ok==0?"نامشخص":(latency/ok)+" ms")+failure+"\nعدم پاسخ مقصدها الزاماً فریز مودم نیست. MTU لینک با MTU مسیر تفاوت دارد.";
+                if(completed>0)getSharedPreferences("apn",0).edit().putString("monitor_csv",csv.toString()).apply();
+                runOnUiThread(()->{
+                    monitoring=false;if(isDestroyed())return;
+                    getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                    monitorButton.setEnabled(true);monitorButton.setText("شروع پایش ۳۰ دقیقه‌ای");testButton.setEnabled(true);
+                    exportButton.setEnabled(!getSharedPreferences("apn",0).getString("monitor_csv","").isEmpty());
+                    monitorStatus.setText(summary);
+                    if(completed>0){history.add(0,summary);while(history.size()>30)history.remove(history.size()-1);saveHistory();renderHistory();}
+                });
+            }
+        });
+    }
+    private void exportMonitor(){
+        if(monitoring)return;
+        Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("text/csv");i.putExtra(Intent.EXTRA_TITLE,"APNAnalyzer-monitor.csv");
+        try{startActivityForResult(i,204);}catch(Exception e){monitorStatus.setText("انتخاب محل ذخیره ممکن نیست.");}
+    }
+    @Override protected void onActivityResult(int request,int result,Intent data){
+        super.onActivityResult(request,result,data);
+        if(request!=204||result!=RESULT_OK||data==null||data.getData()==null)return;
+        try(OutputStream out=getContentResolver().openOutputStream(data.getData())){
+            if(out==null)throw new IOException("No output stream");
+            out.write(("\uFEFF"+getSharedPreferences("apn",0).getString("monitor_csv","")).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            Toast.makeText(this,"گزارش ذخیره شد",Toast.LENGTH_SHORT).show();
+        }catch(Exception e){Toast.makeText(this,"ذخیره گزارش ناموفق بود",Toast.LENGTH_LONG).show();}
+    }
+    @Override protected void onStop(){super.onStop();if(monitoring)monitorStop=true;}
     private void loadHistory(){try{JSONArray a=new JSONArray(getSharedPreferences("apn",0).getString(HISTORY_KEY,"[]"));for(int i=0;i<a.length();i++)history.add(a.getString(i));}catch(Exception ignored){}}
     private void saveHistory(){try{JSONArray a=new JSONArray();for(String x:history)a.put(x);getSharedPreferences("apn",0).edit().putString(HISTORY_KEY,a.toString()).apply();}catch(Exception ignored){}}
     private void renderHistory(){if(historyView==null)return;if(history.isEmpty()){historyView.setText("هنوز آزمایشی ثبت نشده است.");return;}StringBuilder b=new StringBuilder();for(int i=0;i<history.size();i++)b.append(i+1).append(". ").append(history.get(i)).append("\n\n");historyView.setText(b.toString());}
     private int score(int ok,double avg,double jitter,long dns){double s=ok*7.5;if(ok>0)s+=Math.max(0,20-Math.min(20,avg/25));s+=Math.max(0,15-Math.min(15,jitter/10));if(dns>=0)s+=Math.max(0,10-Math.min(10,dns/20));return (int)Math.max(0,Math.min(100,s));}
     private void save(){try{JSONArray a=new JSONArray();for(Profile p:profiles)a.put(p.json());getSharedPreferences("apn",0).edit().putString(PREF,a.toString()).apply();}catch(Exception ignored){}}
     private void load(){try{JSONArray a=new JSONArray(getSharedPreferences("apn",0).getString(PREF,"[]"));for(int i=0;i<a.length();i++)profiles.add(Profile.from(a.getJSONObject(i)));}catch(Exception ignored){}}
-    @Override protected void onDestroy(){super.onDestroy();worker.shutdownNow();}
+    @Override protected void onDestroy(){monitorStop=true;super.onDestroy();worker.shutdownNow();}
 }
