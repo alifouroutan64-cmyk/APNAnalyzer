@@ -323,7 +323,7 @@ public class MainActivity extends Activity {
         TextView hint=text("گزینه‌های کشویی مطابق تنظیمات APN اندروید هستند. قبل از ذخیره، مقادیر را با اپراتور تطبیق بده.",11,0xff475569,false);
         hint.setPadding(0,0,0,dp(6));
         form.addView(hint,0);
-        for(EditText e:new EditText[]{name,apn,mcc,mnc,type,user,pass,proxy,port,server,mmsc,mmsProxy,mmsPort,mtu,mvnoValue})form.addView(e);
+        for(EditText e:new EditText[]{name,apn,mcc,mnc,user,pass,proxy,port,server,mmsc,mmsProxy,mmsPort,mtu,mvnoValue})form.addView(e);
         ScrollView sv=new ScrollView(this); sv.setFillViewport(false); sv.addView(form);
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle(old==null?"ساخت پروفایل APN":"ویرایش پروفایل APN").setView(sv)
                 .setNegativeButton("انصراف",null).setPositiveButton("ذخیره پروفایل",null).create();
