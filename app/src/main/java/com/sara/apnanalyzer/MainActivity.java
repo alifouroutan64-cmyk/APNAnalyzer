@@ -1,0 +1,80 @@
+package com.sara.apnanalyzer;
+
+import android.app.*;
+import android.os.*;
+import android.content.*;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.net.*;
+import android.view.*;
+import android.widget.*;
+import org.json.*;
+import java.net.*;
+import java.io.*;
+import java.util.*;
+import java.util.concurrent.*;
+
+public class MainActivity extends Activity {
+    private final String PREF="profiles_v1";
+    private final ArrayList<Profile> profiles=new ArrayList<>();
+    private LinearLayout root, profileList;
+    private TextView status, results, activeLabel;
+    private Spinner simSpinner, profileSpinner;
+    private TextView historyView;
+    private final ArrayList<String> history=new ArrayList<>();
+    private Button testButton;
+    private ExecutorService worker=Executors.newSingleThreadExecutor();
+    private volatile boolean testing=false;
+    private static final String HISTORY_KEY="test_history_v1";
+
+    static class Profile {
+        String name, apn, mcc, mnc, type, protocol, roamingProtocol, auth, username, password;
+        String proxy, port, server, mmsc, mmsProxy, mmsPort, bearer;
+        int mtu;
+        Profile(String n,String a,String c,String m,String t,String p,String au,String u,String pw,int mt){name=n;apn=a;mcc=c;mnc=m;type=t;protocol=p;auth=au;username=u;password=pw;mtu=mt;roamingProtocol=p;proxy="";port="";server="";mmsc="";mmsProxy="";mmsPort="";bearer="Unspecified";}
+        JSONObject json() throws Exception { JSONObject j=new JSONObject(); j.put("name",name);j.put("apn",apn);j.put("mcc",mcc);j.put("mnc",mnc);j.put("type",type);j.put("protocol",protocol);j.put("roamingProtocol",roamingProtocol);j.put("auth",auth);j.put("username",username);j.put("password",password);j.put("proxy",proxy);j.put("port",port);j.put("server",server);j.put("mmsc",mmsc);j.put("mmsProxy",mmsProxy);j.put("mmsPort",mmsPort);j.put("bearer",bearer);j.put("mtu",mtu);return j; }
+        static Profile from(JSONObject j){Profile p=new Profile(j.optString("name"),j.optString("apn"),j.optString("mcc"),j.optString("mnc"),j.optString("type","default,supl"),j.optString("protocol","IPv4/IPv6"),j.optString("auth","None"),j.optString("username"),j.optString("password"),j.optInt("mtu",0));p.roamingProtocol=j.optString("roamingProtocol",p.protocol);p.proxy=j.optString("proxy");p.port=j.optString("port");p.server=j.optString("server");p.mmsc=j.optString("mmsc");p.mmsProxy=j.optString("mmsProxy");p.mmsPort=j.optString("mmsPort");p.bearer=j.optString("bearer","Unspecified");return p;}
+    }
+
+    @Override public void onCreate(Bundle b){super.onCreate(b); load(); loadHistory(); buildUi(); renderProfiles(); renderHistory();}
+    private int dp(float x){return (int)(x*getResources().getDisplayMetrics().density+.5f);}
+    private TextView text(String s,int size,int color,boolean bold){TextView t=new TextView(this);t.setText(s);t.setTextSize(size);t.setTextColor(color);if(bold)t.setTypeface(null,Typeface.BOLD);t.setGravity(Gravity.RIGHT);t.setTextDirection(View.TEXT_DIRECTION_RTL);return t;}
+    private GradientDrawable bg(int color,int stroke){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(16));if(stroke!=0)d.setStroke(dp(1),stroke);return d;}
+    private Button button(String label){Button b=new Button(this);b.setText(label);b.setAllCaps(false);b.setTextColor(Color.WHITE);b.setBackground(bg(Color.rgb(13,148,136),0));return b;}
+    private void buildUi(){
+        root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(dp(18),dp(18),dp(18),dp(24));root.setBackgroundColor(Color.rgb(9,17,31));root.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        ScrollView scroll=new ScrollView(this);scroll.addView(root);setContentView(scroll);
+        root.addView(text("APN Analyzer",26,Color.WHITE,true));root.addView(text("آزمایش و مقایسه پایداری اینترنت همراه",14,0xff9CAFC5,false));
+        LinearLayout simCard=card();simCard.addView(text("سیم‌کارتی که دیتای موبایل آن فعال است",15,Color.WHITE,true));
+        simSpinner=new Spinner(this);String[] sims={"همراه اول — دیتای پیش‌فرض گوشی روی این سیم‌کارت است","ایرانسل — دیتای پیش‌فرض گوشی روی این سیم‌کارت است"};ArrayAdapter<String> ad=new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,sims);simSpinner.setAdapter(ad);simCard.addView(simSpinner);root.addView(simCard);
+        LinearLayout actions=card();Button add=button("＋ افزودن پروفایل APN");add.setOnClickListener(v->profileDialog(null,-1));actions.addView(add);Button settings=button("باز کردن تنظیمات APN گوشی");settings.setOnClickListener(v->{try{startActivity(new Intent("android.settings.APN_SETTINGS"));}catch(Exception e){startActivity(new Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS));}});actions.addView(settings);root.addView(actions);
+        root.addView(text("پروفایل‌های ذخیره‌شده",18,Color.WHITE,true));profileList=new LinearLayout(this);profileList.setOrientation(LinearLayout.VERTICAL);root.addView(profileList);
+        LinearLayout test=card();activeLabel=text("قبل از تست: وای‌فای را خاموش کن، دیتای سیم‌کارت انتخاب‌شده را روشن کن و APN موردنظر را در تنظیمات گوشی اعمال کن.",13,0xffFBBF24,false);test.addView(activeLabel);
+        profileSpinner=new Spinner(this);test.addView(text("پروفایل اعمال‌شده فعلی را انتخاب کن",13,0xffDCE8F5,false));test.addView(profileSpinner);
+        testButton=button("▶ شروع آزمایش شبکه");testButton.setOnClickListener(v->runTest());test.addView(testButton);status=text("آماده آزمایش",14,0xffA7F3D0,true);test.addView(status);results=text("نتایج آزمایش اینجا نمایش داده می‌شود.",14,Color.WHITE,false);test.addView(results);root.addView(test);
+        LinearLayout hist=card();hist.addView(text("تاریخچه مقایسه APNها",16,Color.WHITE,true));historyView=text("هنوز آزمایشی ثبت نشده است.",12,Color.WHITE,false);hist.addView(historyView);Button clearHistory=button("پاک کردن تاریخچه");clearHistory.setOnClickListener(v->{history.clear();saveHistory();renderHistory();});hist.addView(clearHistory);root.addView(hist);
+        root.addView(text("روش امتیازدهی",16,Color.WHITE,true));root.addView(text("پایداری اتصال، میانگین زمان پاسخ HTTPS، نوسان زمان پاسخ، درصد درخواست‌های ناموفق و زمان DNS بررسی می‌شوند. این تست سرعت دانلود نیست و حجم مصرفی آن کم است، اما صفر نیست.",13,0xff9CAFC5,false));
+        root.addView(text("نکته فنی: برنامه APN را مستقیماً تغییر نمی‌دهد و MTU را هم در سطح مودم اعمال نمی‌کند؛ مقادیر در پروفایل ذخیره می‌شوند تا بتوانی آن‌ها را دستی وارد کنی. نتیجه تست مربوط به اتصال فعال گوشی است، نه تضمین کیفیت ذاتی APN.",12,0xffFCA5A5,false));
+    }
+    private LinearLayout card(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);l.setPadding(dp(14),dp(14),dp(14),dp(14));l.setBackground(bg(0xff152338,0xff26374D));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.setMargins(0,dp(12),0,dp(6));l.setLayoutParams(p);return l;}
+    private void renderProfiles(){profileList.removeAllViews();if(profileSpinner!=null){ArrayList<String> labels=new ArrayList<>();for(Profile x:profiles)labels.add(x.name+" — "+x.apn);if(labels.isEmpty())labels.add("ابتدا یک پروفایل بساز");ArrayAdapter<String> pa=new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,labels);profileSpinner.setAdapter(pa);profileSpinner.setEnabled(!profiles.isEmpty());}if(profiles.isEmpty()){profileList.addView(text("هنوز پروفایلی نساخته‌ای.",13,0xff9CAFC5,false));return;}for(int i=0;i<profiles.size();i++){final int ix=i;Profile p=profiles.get(i);LinearLayout c=card();c.addView(text(p.name+"  •  "+p.apn,16,Color.WHITE,true));c.addView(text("MCC: "+p.mcc+" | MNC: "+p.mnc+" | Type: "+p.type+" | "+p.protocol+" | MTU: "+(p.mtu==0?"خودکار":p.mtu),12,0xffA9BDD2,false));LinearLayout row=new LinearLayout(this);Button edit=button("ویرایش");edit.setOnClickListener(v->profileDialog(p,ix));Button del=button("حذف");del.setBackground(bg(0xff7F1D1D,0));del.setOnClickListener(v->{profiles.remove(ix);save();renderProfiles();});row.addView(edit,new LinearLayout.LayoutParams(0,-2,1));row.addView(del,new LinearLayout.LayoutParams(0,-2,1));c.addView(row);profileList.addView(c);}}
+    private EditText field(String hint,String value){EditText e=new EditText(this);e.setSingleLine(true);e.setText(value);e.setHint(hint);e.setTextSize(14);e.setTextColor(Color.WHITE);e.setHintTextColor(0xff8294A9);e.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xff4B647E));e.setInputType( android.text.InputType.TYPE_CLASS_TEXT);return e;}
+    private void profileDialog(Profile old,int index){
+        LinearLayout form=new LinearLayout(this);form.setPadding(dp(12),0,dp(12),0);form.setOrientation(LinearLayout.VERTICAL);
+        EditText name=field("نام پروفایل",old==null?"":old.name),apn=field("APN",old==null?"":old.apn),mcc=field("MCC",old==null?"432":old.mcc),mnc=field("MNC",old==null?"":old.mnc),type=field("APN Type (default,supl,mms)",old==null?"default,supl":old.type),proto=field("APN Protocol (IPv4 / IPv6 / IPv4/IPv6)",old==null?"IPv4/IPv6":old.protocol),roam=field("Roaming Protocol",old==null?"IPv4/IPv6":old.roamingProtocol),auth=field("Authentication (None / PAP / CHAP / PAP or CHAP)",old==null?"None":old.auth),user=field("Username",old==null?"":old.username),pass=field("Password",old==null?"":old.password),proxy=field("Proxy",old==null?"":old.proxy),port=field("Port",old==null?"":old.port),server=field("Server",old==null?"":old.server),mmsc=field("MMSC URL",old==null?"":old.mmsc),mmsProxy=field("MMS Proxy",old==null?"":old.mmsProxy),mmsPort=field("MMS Port",old==null?"":old.mmsPort),bearer=field("Bearer (Unspecified / LTE / NR)",old==null?"Unspecified":old.bearer),mtu=field("MTU اختیاری؛ صفر یعنی خودکار",old==null?"0":String.valueOf(old.mtu));
+        for(EditText e:new EditText[]{name,apn,mcc,mnc,type,proto,roam,auth,user,pass,proxy,port,server,mmsc,mmsProxy,mmsPort,bearer,mtu})form.addView(e);
+        ScrollView sv=new ScrollView(this);sv.addView(form);new AlertDialog.Builder(this).setTitle(old==null?"پروفایل جدید":"ویرایش پروفایل").setView(sv).setNegativeButton("انصراف",null).setPositiveButton("ذخیره",(d,w)->{try{Profile p=new Profile(name.getText().toString().trim(),apn.getText().toString().trim(),mcc.getText().toString().trim(),mnc.getText().toString().trim(),type.getText().toString().trim(),proto.getText().toString().trim(),auth.getText().toString().trim(),user.getText().toString(),pass.getText().toString(),Integer.parseInt(mtu.getText().toString().trim()));p.roamingProtocol=roam.getText().toString().trim();p.proxy=proxy.getText().toString().trim();p.port=port.getText().toString().trim();p.server=server.getText().toString().trim();p.mmsc=mmsc.getText().toString().trim();p.mmsProxy=mmsProxy.getText().toString().trim();p.mmsPort=mmsPort.getText().toString().trim();p.bearer=bearer.getText().toString().trim();if(p.name.isEmpty()||p.apn.isEmpty())throw new Exception("نام و APN الزامی است");if(index>=0)profiles.set(index,p);else profiles.add(p);save();renderProfiles();}catch(Exception ex){new AlertDialog.Builder(this).setMessage("اطلاعات معتبر نیست؛ مقدار MTU باید عدد باشد.").setPositiveButton("باشه",null).show();}}).show();
+    }
+    private void runTest(){if(testing)return;ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);Network n=cm.getActiveNetwork();NetworkCapabilities caps=n==null?null:cm.getNetworkCapabilities(n);if(caps==null||!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)){status.setText("اتصال اینترنت فعال پیدا نشد.");return;}if(caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)){new AlertDialog.Builder(this).setMessage("وای‌فای هنوز روشن/متصل است. برای تست دیتای سیم‌کارت، وای‌فای را خاموش کن.").setPositiveButton("متوجه شدم",null).show();return;}if(!caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)){status.setText("اتصال فعال، شبکه موبایل تشخیص داده نشد. VPN یا اتصال‌های دیگر را موقتاً غیرفعال کن.");return;}
+        testing=true;testButton.setEnabled(false);status.setText("در حال آزمایش… لطفاً تا پایان تست از برنامه خارج نشو.");results.setText("");final String sim=simSpinner.getSelectedItem().toString();final String profile=(profileSpinner!=null&&profileSpinner.getSelectedItem()!=null)?profileSpinner.getSelectedItem().toString():"پروفایل نامشخص";worker.execute(()->{ArrayList<Long> times=new ArrayList<>();int ok=0;StringBuilder log=new StringBuilder();long dns=-1;try{long ds=System.nanoTime();InetAddress.getAllByName("one.one.one.one");dns=(System.nanoTime()-ds)/1_000_000; }catch(Exception e){}for(int i=0;i<8;i++){long t=System.nanoTime();boolean good=false;try{HttpURLConnection c=(HttpURLConnection)new URL("https://www.google.com/generate_204").openConnection();c.setConnectTimeout(5000);c.setReadTimeout(5000);c.setRequestMethod("GET");c.setUseCaches(false);int code=c.getResponseCode();good=(code>=200&&code<400);c.disconnect();}catch(Exception e){}long ms=(System.nanoTime()-t)/1_000_000;if(good){ok++;times.add(ms);log.append("آزمون ").append(i+1).append(": ").append(ms).append(" ms\n");}else log.append("آزمون ").append(i+1).append(": ناموفق\n");try{Thread.sleep(350);}catch(Exception ignored){}}
+            double avg=0,jitter=0;for(long x:times)avg+=x;if(!times.isEmpty())avg/=times.size();if(times.size()>1){for(int i=1;i<times.size();i++)jitter+=Math.abs(times.get(i)-times.get(i-1));jitter/=(times.size()-1);}final double a=avg,j=jitter;final int success=ok;final long d=dns;final String detail=log.toString();final int score=score(ok,avg,jitter,dns);final String record=java.text.DateFormat.getDateTimeInstance().format(new Date())+" | "+sim+" | "+profile+" | امتیاز "+score+" | موفق "+ok+"/8 | میانگین "+(ok==0?"—":String.format(Locale.US,"%.0fms",avg))+" | نوسان "+String.format(Locale.US,"%.0fms",jitter)+" | DNS "+(dns<0?"—":dns+"ms");runOnUiThread(()->{history.add(0,record);while(history.size()>30)history.remove(history.size()-1);saveHistory();renderHistory();testing=false;testButton.setEnabled(true);status.setText("آزمایش تمام شد — امتیاز تقریبی: "+score+" از 100");results.setText("سیم‌کارت انتخابی: "+sim+"\nموفقیت اتصال: "+success+" از 8\nنرخ ناموفق بودن درخواست‌ها: "+(100-success*100/8)+"٪\nمیانگین زمان پاسخ HTTPS: "+(success==0?"—":String.format(Locale.US,"%.0f ms",a))+"\nنوسان زمان پاسخ (تقریبی): "+String.format(Locale.US,"%.0f ms",j)+"\nزمان DNS: "+(d<0?"ناموفق":d+" ms")+"\n\n"+detail+"\nاین امتیاز فقط برای اتصال فعلی و در همین لحظه معتبر است. برای مقایسه APNها، هر بار یک پروفایل را اعمال و همین تست را در شرایط مشابه تکرار کن.");});});
+    }
+    private void loadHistory(){try{JSONArray a=new JSONArray(getSharedPreferences("apn",0).getString(HISTORY_KEY,"[]"));for(int i=0;i<a.length();i++)history.add(a.getString(i));}catch(Exception ignored){}}
+    private void saveHistory(){try{JSONArray a=new JSONArray();for(String x:history)a.put(x);getSharedPreferences("apn",0).edit().putString(HISTORY_KEY,a.toString()).apply();}catch(Exception ignored){}}
+    private void renderHistory(){if(historyView==null)return;if(history.isEmpty()){historyView.setText("هنوز آزمایشی ثبت نشده است.");return;}StringBuilder b=new StringBuilder();for(int i=0;i<history.size();i++)b.append(i+1).append(". ").append(history.get(i)).append("\n\n");historyView.setText(b.toString());}
+    private int score(int ok,double avg,double jitter,long dns){double s=ok*7.5;if(ok>0)s+=Math.max(0,20-Math.min(20,avg/25));s+=Math.max(0,15-Math.min(15,jitter/10));if(dns>=0)s+=Math.max(0,10-Math.min(10,dns/20));return (int)Math.max(0,Math.min(100,s));}
+    private void save(){try{JSONArray a=new JSONArray();for(Profile p:profiles)a.put(p.json());getSharedPreferences("apn",0).edit().putString(PREF,a.toString()).apply();}catch(Exception ignored){}}
+    private void load(){try{JSONArray a=new JSONArray(getSharedPreferences("apn",0).getString(PREF,"[]"));for(int i=0;i<a.length();i++)profiles.add(Profile.from(a.getJSONObject(i)));}catch(Exception ignored){}}
+    @Override protected void onDestroy(){super.onDestroy();worker.shutdownNow();}
+}
