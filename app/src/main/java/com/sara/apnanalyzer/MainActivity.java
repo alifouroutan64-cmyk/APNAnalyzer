@@ -44,6 +44,9 @@ public class MainActivity extends Activity {
         String name, apn, mcc, mnc, type, protocol, roamingProtocol, auth, username, password;
         String proxy, port, server, mmsc, mmsProxy, mmsPort, bearer, mvnoType, mvnoValue;
         int mtu;
+        boolean hasTestResult;
+        double lastScore, lastSuccessRate;
+        long lastAverageLatency, lastLongestFreeze, lastTestAt;
         Profile(String n,String a,String c,String m,String t,String p,String au,String u,String pw,int mt) {
             name=n; apn=a; mcc=c; mnc=m; type=t; protocol=p; auth=au; username=u; password=pw; mtu=mt;
             roamingProtocol=p; proxy=""; port=""; server=""; mmsc=""; mmsProxy=""; mmsPort="";
@@ -56,6 +59,12 @@ public class MainActivity extends Activity {
             j.put("username",username); j.put("password",password); j.put("proxy",proxy); j.put("port",port);
             j.put("server",server); j.put("mmsc",mmsc); j.put("mmsProxy",mmsProxy); j.put("mmsPort",mmsPort);
             j.put("bearer",bearer); j.put("mtu",mtu); j.put("mvnoType",mvnoType); j.put("mvnoValue",mvnoValue);
+            j.put("hasTestResult",hasTestResult);
+            j.put("lastScore",lastScore);
+            j.put("lastSuccessRate",lastSuccessRate);
+            j.put("lastAverageLatency",lastAverageLatency);
+            j.put("lastLongestFreeze",lastLongestFreeze);
+            j.put("lastTestAt",lastTestAt);
             return j;
         }
         static Profile from(JSONObject j) {
@@ -65,7 +74,14 @@ public class MainActivity extends Activity {
             p.roamingProtocol=j.optString("roamingProtocol",p.protocol); p.proxy=j.optString("proxy"); p.port=j.optString("port");
             p.server=j.optString("server"); p.mmsc=j.optString("mmsc"); p.mmsProxy=j.optString("mmsProxy");
             p.mmsPort=j.optString("mmsPort"); p.bearer=j.optString("bearer","Unspecified");
-            p.mvnoType=j.optString("mvnoType","None"); p.mvnoValue=j.optString("mvnoValue",""); return p;
+            p.mvnoType=j.optString("mvnoType","None"); p.mvnoValue=j.optString("mvnoValue","");
+            p.hasTestResult=j.optBoolean("hasTestResult",false);
+            p.lastScore=j.optDouble("lastScore",0);
+            p.lastSuccessRate=j.optDouble("lastSuccessRate",0);
+            p.lastAverageLatency=j.optLong("lastAverageLatency",0);
+            p.lastLongestFreeze=j.optLong("lastLongestFreeze",0);
+            p.lastTestAt=j.optLong("lastTestAt",0);
+            return p;
         }
     }
 
@@ -111,7 +127,13 @@ public class MainActivity extends Activity {
 
         LinearLayout actions=card(); actions.addView(text("مدیریت پروفایل",16,Color.WHITE,true));
         Button add=button("＋ افزودن پروفایل APN",false); add.setOnClickListener(v->profileDialog(null,-1)); actions.addView(add);
-        Button settings=button("باز کردن تنظیمات APN گوشی",true); settings.setOnClickListener(v->{try{startActivity(new Intent("android.settings.APN_SETTINGS"));}catch(Exception e){startActivity(new Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS));}}); actions.addView(settings); root.addView(actions);
+        Button settings=button("باز کردن تنظیمات APN گوشی",true);
+        settings.setOnClickListener(v->openApnSettings());
+        actions.addView(settings);
+        Button best=button("★ پیشنهاد بهترین APN آزمایش‌شده",false);
+        best.setOnClickListener(v->showBestApn());
+        actions.addView(best);
+        root.addView(actions);
 
         root.addView(text("پروفایل‌های ذخیره‌شده",18,Color.WHITE,true)); profileList=vertical(); root.addView(profileList);
 
@@ -147,6 +169,14 @@ public class MainActivity extends Activity {
             final int ix=i; Profile p=profiles.get(i); LinearLayout c=card();
             c.addView(text(p.name+"  •  "+p.apn,16,Color.WHITE,true));
             c.addView(text("MCC: "+p.mcc+"  |  MNC: "+p.mnc+"  |  "+p.protocol+"  |  Bearer: "+p.bearer,11,0xffA9BDD2,false));
+            if(p.hasTestResult) {
+                c.addView(text(String.format(Locale.US,
+                    "امتیاز: %.1f از ۱۰۰ | موفقیت: %.1f%% | میانگین: %d ms | طولانی‌ترین فریز: %d ثانیه",
+                    p.lastScore,p.lastSuccessRate,p.lastAverageLatency,p.lastLongestFreeze/1000),
+                    12,0xff67E8D2,true));
+            } else {
+                c.addView(text("هنوز آزمایش نشده است.",11,0xffA9BDD2,false));
+            }
             LinearLayout row=new LinearLayout(this); Button edit=button("ویرایش",true); edit.setOnClickListener(v->profileDialog(p,ix));
             Button del=button("حذف",true); del.setOnClickListener(v->new AlertDialog.Builder(this).setMessage("این پروفایل حذف شود؟").setNegativeButton("انصراف",null).setPositiveButton("حذف",(d,w)->{profiles.remove(ix);save();renderProfiles();}).show());
             row.addView(edit,new LinearLayout.LayoutParams(0,-2,1)); row.addView(del,new LinearLayout.LayoutParams(0,-2,1)); c.addView(row); profileList.addView(c);
@@ -154,6 +184,65 @@ public class MainActivity extends Activity {
     }
 
     // Dialog uses dark text on its light Material surface: this fixes the invisible white input text.
+    private void openApnSettings() {
+        try {
+            startActivity(new Intent("android.settings.APN_SETTINGS"));
+        } catch(Exception e) {
+            try {
+                startActivity(new Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS));
+            } catch(Exception ignored) {
+                new AlertDialog.Builder(this)
+                    .setMessage("از تنظیمات شبکه و سیم‌کارت وارد Access Point Names شو.")
+                    .setPositiveButton("باشه",null).show();
+            }
+        }
+    }
+
+    private Profile findBestProfile() {
+        Profile best=null;
+        for(Profile p:profiles) {
+            if(p.hasTestResult && (best==null || p.lastScore>best.lastScore)) best=p;
+        }
+        return best;
+    }
+
+    private void showBestApn() {
+        final Profile best=findBestProfile();
+        if(best==null) {
+            new AlertDialog.Builder(this)
+                .setTitle("هنوز نتیجه‌ای ثبت نشده")
+                .setMessage("هر APN را جداگانه در تنظیمات گوشی فعال کن، سپس همان پروفایل را در برنامه انتخاب و آزمایش کن.")
+                .setPositiveButton("تنظیمات APN",(d,w)->openApnSettings())
+                .setNegativeButton("بستن",null).show();
+            return;
+        }
+
+        String detail=String.format(Locale.US,
+            "بهترین پروفایل آزمایش‌شده: %s\nAPN: %s\nامتیاز: %.1f از ۱۰۰\nنرخ موفقیت: %.1f%%\nمیانگین پاسخ: %d ms\nطولانی‌ترین فریز: %d ثانیه\n\nبرای فعال‌سازی، اطلاعات را در تنظیمات گوشی وارد یا انتخاب کن.",
+            best.name,best.apn,best.lastScore,best.lastSuccessRate,
+            best.lastAverageLatency,best.lastLongestFreeze/1000);
+
+        new AlertDialog.Builder(this)
+            .setTitle("نتیجه مقایسه APNها")
+            .setMessage(detail)
+            .setNeutralButton("کپی اطلاعات",(d,w)->{
+                String copy="Name: "+best.name+
+                    "\nAPN: "+best.apn+
+                    "\nMCC: "+best.mcc+
+                    "\nMNC: "+best.mnc+
+                    "\nAPN Type: "+best.type+
+                    "\nProtocol: "+best.protocol+
+                    "\nRoaming protocol: "+best.roamingProtocol+
+                    "\nAuthentication: "+best.auth+
+                    "\nBearer: "+best.bearer;
+                android.content.ClipboardManager cm=
+                    (android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+                cm.setPrimaryClip(ClipData.newPlainText("Best APN",copy));
+                Toast.makeText(this,"اطلاعات کپی شد.",Toast.LENGTH_SHORT).show();
+            })
+            .setPositiveButton("فعال‌سازی در تنظیمات",(d,w)->openApnSettings())
+            .setNegativeButton("بستن",null).show();
+    }
     private EditText field(String hint,String value,boolean numeric) {
         EditText e=new EditText(this); e.setSingleLine(true); e.setText(value); e.setHint(hint); e.setTextSize(14);
         e.setTextColor(0xff172033); e.setHintTextColor(0xff78879A); e.setPadding(dp(12),dp(8),dp(12),dp(8));
@@ -343,13 +432,30 @@ public class MainActivity extends Activity {
 
     private void runTest() {
         if(testing)return;
+        if(profiles.isEmpty()) {
+            new AlertDialog.Builder(this)
+                .setMessage("ابتدا یک پروفایل APN بساز.")
+                .setPositiveButton("باشه",null).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+            .setTitle("تأیید پروفایل فعال")
+            .setMessage("آیا همین پروفایل را قبلاً در تنظیمات APN گوشی فعال کرده‌ای؟ انتخاب پروفایل در برنامه به‌تنهایی تنظیمات گوشی را تغییر نمی‌دهد.")
+            .setNegativeButton("خیر",null)
+            .setPositiveButton("بله، شروع آزمایش",(d,w)->startTestConfirmed())
+            .show();
+    }
+
+    private void startTestConfirmed() {
+        if(testing)return;
         ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE); Network n=cm.getActiveNetwork();
         NetworkCapabilities caps=n==null?null:cm.getNetworkCapabilities(n);
         if(caps==null||!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)){status.setText("اتصال اینترنت فعال پیدا نشد.");return;}
         if(caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)){new AlertDialog.Builder(this).setMessage("وای‌فای متصل است. برای سنجش دیتای سیم‌کارت، وای‌فای را خاموش کن.").setPositiveButton("باشه",null).show();return;}
         if(!caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)){status.setText("اتصال موبایل تشخیص داده نشد. VPN را نیز موقتاً خاموش کن.");return;}
         testing=true; stopRequested=false; completed=successes=failures=0; totalLatency=maxLatency=0; minLatency=Long.MAX_VALUE; latencySamples.clear();
-        freezeTracker=new FreezeTracker(FREEZE_THRESHOLD_MS); testStartedAt=SystemClock.elapsedRealtime();
+        testStartedAt=SystemClock.elapsedRealtime();
+        freezeTracker=new FreezeTracker(FREEZE_THRESHOLD_MS,System.currentTimeMillis(),testStartedAt);
         testButton.setText("■ توقف پایش"); progressBar.setProgress(0); progressLabel.setText("۰٪ تکمیل شده"); status.setText("پایش آغاز شد؛ برنامه را در پیش‌زمینه نگه دار."); results.setText("در حال جمع‌آوری داده‌های شبکه…");
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         final String sim=String.valueOf(simSpinner.getSelectedItem());
@@ -373,7 +479,7 @@ public class MainActivity extends Activity {
             finally {if(c!=null)c.disconnect();}
             long finished=SystemClock.elapsedRealtime(); completed++;
             if(ok){successes++;totalLatency+=latency;minLatency=Math.min(minLatency,latency);maxLatency=Math.max(maxLatency,latency);latencySamples.add(latency);freezeTracker.onSuccess(finished);}
-            else {failures++;freezeTracker.onFailure(finished);}
+            else {failures++;freezeTracker.onFailure(started,finished);}
             if(finished-lastUi>=500 || completed==1){lastUi=finished; final boolean fOk=ok; final long fLatency=latency; final int fHttp=http; final long elapsed=finished-testStartedAt; final int count=completed; final int good=successes; final int bad=failures; final int freezes=freezeTracker.getFreezeCount(); final long outage=freezeTracker.getCurrentOutageMs(finished); handler.post(()->updateLiveUi(elapsed,count,good,bad,freezes,outage,fOk,fLatency,fHttp));}
             nextProbe+=PROBE_INTERVAL_MS;
             if(nextProbe<finished)nextProbe=finished+PROBE_INTERVAL_MS;
@@ -383,7 +489,7 @@ public class MainActivity extends Activity {
         final long avg=successes==0?0:totalLatency/successes, longest=freezeTracker.getLongestFreezeMs(), totalFreeze=freezeTracker.getTotalFreezeMs();
         final long min=minLatency==Long.MAX_VALUE?0:minLatency, max=maxLatency;
         final String record=java.text.DateFormat.getDateTimeInstance().format(new Date())+" | "+sim+" | "+profile+" | موفق "+good+"/"+count+" | فریز "+freezes+" | میانگین "+avg+"ms";
-        handler.post(()->finishUi(elapsed,count,good,bad,freezes,avg,min,max,longest,totalFreeze,record));
+        handler.post(()->finishUi(elapsed,count,good,bad,freezes,avg,min,max,longest,totalFreeze,record,profile));
     }
     private void updateLiveUi(long elapsed,int count,int good,int bad,int freezes,long outage,boolean lastOk,long latency,int http) {
         int sec=(int)Math.min(1800,elapsed/1000); int remain=Math.max(0,1800-sec); timerView.setText(String.format(Locale.US,"%02d:%02d",remain/60,remain%60));
@@ -392,15 +498,70 @@ public class MainActivity extends Activity {
         status.setText(lastOk?"اتصال برقرار است  •  آخرین پاسخ "+latency+" ms":"پاسخ ناموفق در آخرین درخواست");
         results.setText("موفق: "+good+"   ناموفق: "+bad+"\nنرخ موفقیت: "+(count==0?0:(good*100/count))+"٪\nآخرین کد HTTP: "+(http<0?"—":http));
     }
-    private void finishUi(long elapsed,int count,int good,int bad,int freezes,long avg,long min,long max,long longest,long totalFreeze,String record) {
+    private void finishUi(long elapsed,int count,int good,int bad,int freezes,long avg,long min,long max,long longest,long totalFreeze,String record,String profileName) {
         testing=false; stopRequested=false; testButton.setEnabled(true); testButton.setText("▶ شروع پایش ۳۰ دقیقه‌ای"); getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         int sec=(int)Math.min(1800,elapsed/1000); progressBar.setProgress(sec); progressLabel.setText((sec*100/1800)+"٪ تکمیل شده");
         timerView.setText("پایان پایش"); freezeLabel.setText("فریزهای شناسایی‌شده: "+freezes);
         status.setText(elapsed>=TEST_DURATION_MS?"پایش ۳۰ دقیقه‌ای کامل شد.":"پایش متوقف شد و گزارش نهایی آماده است.");
-        String report="مدت پایش: "+(elapsed/1000)+" ثانیه\nکل درخواست‌ها: "+count+"\nموفق: "+good+"  |  ناموفق: "+bad+"\nنرخ موفقیت: "+(count==0?0:good*100/count)+"٪\nتعداد فریزهای حداقل ۶ ثانیه‌ای: "+freezes+"\nمجموع زمان فریز: "+(totalFreeze/1000)+" ثانیه\nطولانی‌ترین فریز: "+(longest/1000)+" ثانیه\nمیانگین پاسخ موفق: "+(good==0?"—":avg+" ms")+"\nکمترین / بیشترین پاسخ: "+(good==0?"—":min+" / "+max+" ms")+"\n\nتوجه: هر درخواست HTTPS شاخص دسترسی به endpoint است؛ این نتیجه معادل تست سرعت یا Ping ICMP نیست.";
-        results.setText(report); if(count>0){history.add(0,record);while(history.size()>30)history.remove(history.size()-1);saveHistory();renderHistory();}
+        double successRate=count==0?0:(good*100.0/count);
+        double stabilityScore=Math.max(0,100.0-(totalFreeze/1000.0*2.0));
+        double latencyScore=good==0?0:Math.max(0,100.0-(avg/20.0));
+        double score=count==0?0:(successRate*0.60+stabilityScore*0.25+latencyScore*0.15);
+
+        Profile tested=null;
+        for(Profile p:profiles) if(p.name.equals(profileName)){tested=p;break;}
+        if(tested!=null && count>0) {
+            tested.hasTestResult=true;
+            tested.lastScore=score;
+            tested.lastSuccessRate=successRate;
+            tested.lastAverageLatency=avg;
+            tested.lastLongestFreeze=longest;
+            tested.lastTestAt=System.currentTimeMillis();
+            save();
+            renderProfiles();
+        }
+
+        StringBuilder report=new StringBuilder(
+            "مدت پایش: "+(elapsed/1000)+" ثانیه\n"+
+            "کل درخواست‌ها: "+count+"\n"+
+            "موفق: "+good+" | ناموفق: "+bad+"\n"+
+            "نرخ موفقیت: "+String.format(Locale.US,"%.1f",successRate)+"٪\n"+
+            "تعداد فریزها: "+freezes+"\n"+
+            "مجموع زمان فریز: "+(totalFreeze/1000)+" ثانیه\n"+
+            "طولانی‌ترین فریز: "+(longest/1000)+" ثانیه\n"+
+            "میانگین پاسخ موفق: "+(good==0?"—":avg+" ms")+"\n"+
+            "کمترین / بیشترین پاسخ: "+(good==0?"—":min+" / "+max+" ms")+
+            "\n\nامتیاز پروفایل: "+String.format(Locale.US,"%.1f",score)+" از ۱۰۰"+
+            "\nوزن‌ها: موفقیت ۶۰٪، پایداری ۲۵٪، تأخیر ۱۵٪");
+
+        List<FreezeTracker.FreezeEvent> events=freezeTracker.getEvents();
+        report.append("\n\nجزئیات فریزهای شناسایی‌شده:");
+        if(events.isEmpty()) {
+            report.append("\nهیچ فریز حداقل ۶ ثانیه‌ای ثبت نشد.");
+        } else {
+            for(int i=0;i<events.size();i++) {
+                FreezeTracker.FreezeEvent e=events.get(i);
+                report.append("\n\nفریز ").append(i+1)
+                    .append(": ").append(formatTime(e.startWallMs))
+                    .append(" تا ").append(formatTime(e.endWallMs))
+                    .append("\nمدت: ").append(e.durationMs/1000)
+                    .append(" ثانیه | درخواست ناموفق: ").append(e.failedRequests);
+            }
+        }
+        report.append("\n\nتوجه: این آزمایش HTTPS معادل تست سرعت دانلود یا Ping خام نیست. رتبه‌بندی فقط میان APNهایی معتبر است که جداگانه فعال و آزمایش شده‌اند.");
+        results.setText(report.toString());
+
+        if(count>0) {
+            history.add(0,record+" | امتیاز "+String.format(Locale.US,"%.1f",score));
+            while(history.size()>30)history.remove(history.size()-1);
+            saveHistory();
+            renderHistory();
+        }
     }
 
+    private String formatTime(long millis) {
+        return new java.text.SimpleDateFormat("HH:mm:ss",Locale.getDefault()).format(new Date(millis));
+    }
     private void loadHistory(){try{JSONArray a=new JSONArray(getSharedPreferences("apn",0).getString(HISTORY_KEY,"[]"));for(int i=0;i<a.length();i++)history.add(a.getString(i));}catch(Exception ignored){}}
     private void saveHistory(){try{JSONArray a=new JSONArray();for(String x:history)a.put(x);getSharedPreferences("apn",0).edit().putString(HISTORY_KEY,a.toString()).apply();}catch(Exception ignored){}}
     private void renderHistory(){if(historyView==null)return;if(history.isEmpty()){historyView.setText("هنوز آزمایشی ثبت نشده است.");return;}StringBuilder b=new StringBuilder();for(int i=0;i<history.size();i++)b.append(i+1).append(". ").append(history.get(i)).append("\n\n");historyView.setText(b.toString());}
