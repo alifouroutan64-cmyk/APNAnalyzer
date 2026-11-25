@@ -19,7 +19,7 @@ public class FreezeTrackerTest {
         assertEquals(1, tracker.getFreezeCount());
         tracker.onSuccess(9000L);
         assertEquals(1, tracker.getFreezeCount());
-        assertEquals(14000L, tracker.getTotalFreezeMs());
+        assertEquals(8000L, tracker.getTotalFreezeMs());
         assertEquals(8000L, tracker.getLongestFreezeMs());
     }
 
