@@ -160,33 +160,61 @@ public class MainActivity extends Activity {
         e.setBackground(shape(0xffF4F7FB,0xffCBD5E1,10)); e.setInputType(numeric?android.text.InputType.TYPE_CLASS_NUMBER:android.text.InputType.TYPE_CLASS_TEXT);
         LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2); p.setMargins(0,dp(4),0,dp(4)); e.setLayoutParams(p); return e;
     }
+    private Spinner addDropdown(LinearLayout form,String label,String current,String[] options) {
+        TextView title=text(label,13,0xff334155,true);
+        title.setPadding(dp(2),dp(8),dp(2),dp(2));
+        form.addView(title);
+        Spinner spinner=new Spinner(this);
+        ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_spinner_item,options);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinner.setAdapter(adapter);
+        int selected=0;
+        for(int i=0;i<options.length;i++) {
+            if(options[i].equalsIgnoreCase(current==null?"":current.trim())) {
+                selected=i;
+                break;
+            }
+        }
+        spinner.setSelection(selected);
+        spinner.setPadding(dp(8),dp(4),dp(8),dp(4));
+        form.addView(spinner,new LinearLayout.LayoutParams(-1,-2));
+        return spinner;
+    }
+
+    private String selected(Spinner spinner) {
+        Object item=spinner.getSelectedItem();
+        return item==null?"":item.toString();
+    }
     private void profileDialog(Profile old,int index) {
         LinearLayout form=vertical(); form.setPadding(dp(12),dp(8),dp(12),dp(8));
         EditText name=field("نام پروفایل",old==null?"MCI-GPRS":old.name,false);
         EditText apn=field("APN",old==null?"mcinet":old.apn,false);
         EditText mcc=field("MCC",old==null?"432":old.mcc,true),mnc=field("MNC",old==null?"11":old.mnc,true);
         EditText type=field("APN Type",old==null?"default,supl":old.type,false);
-        EditText proto=field("APN Protocol",old==null?"IPv4/IPv6":old.protocol,false);
-        EditText roam=field("APN Roaming Protocol",old==null?"IPv4/IPv6":old.roamingProtocol,false);
-        EditText auth=field("Authentication type",old==null?"None":old.auth,false);
+        Spinner auth=addDropdown(form,"Authentication type",old==null?"None":old.auth,new String[]{"None","PAP","CHAP","PAP or CHAP"});
+        Spinner proto=addDropdown(form,"APN protocol",old==null?"IPv4/IPv6":old.protocol,new String[]{"IPv4","IPv6","IPv4/IPv6"});
+        Spinner roam=addDropdown(form,"APN roaming protocol",old==null?"IPv4/IPv6":old.roamingProtocol,new String[]{"IPv4","IPv6","IPv4/IPv6"});
         EditText user=field("Username",old==null?"":old.username,false),pass=field("Password",old==null?"":old.password,false);
         EditText proxy=field("Proxy",old==null?"":old.proxy,false),port=field("Port",old==null?"":old.port,true);
         EditText server=field("Server",old==null?"":old.server,false),mmsc=field("MMSC",old==null?"":old.mmsc,false);
         EditText mmsProxy=field("MMS Proxy",old==null?"":old.mmsProxy,false),mmsPort=field("MMS Port",old==null?"":old.mmsPort,true);
-        EditText bearer=field("Bearer",old==null?"Unspecified":old.bearer,false),mtu=field("MTU (خالی یا صفر = خودکار)",old==null?"0":String.valueOf(old.mtu),true);
-        EditText mvnoType=field("MVNO Type (None / SPN / IMSI / GID / ICCID)",old==null?"None":old.mvnoType,false);
-        EditText mvnoValue=field("MVNO Value",old==null?"":old.mvnoValue,false);
-        TextView hint=text("پیش‌فرض‌های نمایش‌داده‌شده بر اساس نمونه MCI-GPRS هستند؛ قبل از ذخیره، مقادیر را با اپراتور خود تطبیق بده.",11,0xff475569,false); hint.setPadding(0,0,0,dp(6)); form.addView(hint);
-        for(EditText e:new EditText[]{name,apn,mcc,mnc,type,proto,roam,auth,user,pass,proxy,port,server,mmsc,mmsProxy,mmsPort,bearer,mtu,mvnoType,mvnoValue})form.addView(e);
+        Spinner bearer=addDropdown(form,"Bearer",old==null?"Unspecified":old.bearer,new String[]{"Unspecified","LTE","HSPAP","HSPA","HSUPA","HSDPA","UMTS","EDGE"});
+        EditText mtu=field("MTU (خالی یا صفر = خودکار)",old==null?"0":String.valueOf(old.mtu),true);
+        Spinner mvnoType=addDropdown(form,"MVNO type",old==null?"None":old.mvnoType,new String[]{"None","SPN","IMSI","GID","ICCID"});
+        EditText mvnoValue=field("MVNO value",old==null?"":old.mvnoValue,false);
+        TextView hint=text("گزینه‌های کشویی مطابق تنظیمات APN اندروید هستند. قبل از ذخیره، مقادیر را با اپراتور تطبیق بده.",11,0xff475569,false);
+        hint.setPadding(0,0,0,dp(6));
+        form.addView(hint,0);
+        for(EditText e:new EditText[]{name,apn,mcc,mnc,type,user,pass,proxy,port,server,mmsc,mmsProxy,mmsPort,mtu,mvnoValue})form.addView(e);
         ScrollView sv=new ScrollView(this); sv.setFillViewport(false); sv.addView(form);
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle(old==null?"ساخت پروفایل APN":"ویرایش پروفایل APN").setView(sv)
                 .setNegativeButton("انصراف",null).setPositiveButton("ذخیره پروفایل",null).create();
         dialog.setOnShowListener(x->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             try {
                 int mtuVal=mtu.getText().toString().trim().isEmpty()?0:Integer.parseInt(mtu.getText().toString().trim());
-                Profile p=new Profile(val(name),val(apn),val(mcc),val(mnc),val(type),val(proto),val(auth),val(user),val(pass),mtuVal);
-                p.roamingProtocol=val(roam); p.proxy=val(proxy); p.port=val(port); p.server=val(server); p.mmsc=val(mmsc);
-                p.mmsProxy=val(mmsProxy); p.mmsPort=val(mmsPort); p.bearer=val(bearer); p.mvnoType=val(mvnoType); p.mvnoValue=val(mvnoValue);
+                Profile p=new Profile(val(name),val(apn),val(mcc),val(mnc),val(type),selected(proto),selected(auth),val(user),val(pass),mtuVal);
+                p.roamingProtocol=selected(roam); p.proxy=val(proxy); p.port=val(port); p.server=val(server); p.mmsc=val(mmsc);
+                p.mmsProxy=val(mmsProxy); p.mmsPort=val(mmsPort); p.bearer=selected(bearer); p.mvnoType=selected(mvnoType); p.mvnoValue=val(mvnoValue);
                 if(p.name.isEmpty()||p.apn.isEmpty())throw new IllegalArgumentException("نام و APN الزامی است");
                 if(!p.mcc.matches("\\d{3}")||!p.mnc.matches("\\d{2,3}"))throw new IllegalArgumentException("MCC باید ۳ رقم و MNC باید ۲ یا ۳ رقم باشد.");
                 if(index>=0)profiles.set(index,p);else profiles.add(p); save(); renderProfiles(); dialog.dismiss();
